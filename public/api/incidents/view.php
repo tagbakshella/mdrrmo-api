@@ -1,20 +1,71 @@
 <?php
-require_once __DIR__ . '/../../../src/db_connection.php';
-cors();
 
-$id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-if (!$id) jsonResponse(400, ['error' => 'A valid numeric id is required, e.g. ?id=1']);
+header('Content-Type: application/json');
+
+require_once _DIR_ . '/../../../src/database.php';
 
 try {
-    $stmt = getConnection()->prepare(
-        "SELECT id, reporter_name, contact_number, incident_type, description, barangay,
-                ST_Y(location::geometry) AS latitude, ST_X(location::geometry) AS longitude,
-                status, reported_at
-         FROM incidents WHERE id = :id");
-    $stmt->execute([':id' => $id]);
-    $row = $stmt->fetch();
-    $row ? jsonResponse(200, $row) : jsonResponse(404, ['error' => 'Incident not found']);
-} catch (PDOException $e) {
-    error_log($e->getMessage());
-    jsonResponse(500, ['error' => 'Database error.']);
+
+   if (!isset($_GET['id'])) {
+
+       http_response_code(400);
+
+       echo json_encode([
+           'success' => false,
+           'message' => 'Incident ID is required.'
+       ]);
+
+       exit;
+   }
+
+   $id = (int) $_GET['id'];
+
+   $pdo = getDatabaseConnection();
+
+   $sql = "
+       SELECT
+           id,
+           incident_type,
+           description,
+           latitude,
+           longitude,
+           status,
+           created_at
+       FROM incidents
+       WHERE id = :id
+   ";
+
+   $stmt = $pdo->prepare($sql);
+
+   $stmt->execute([
+       ':id' => $id
+   ]);
+
+   $incident = $stmt->fetch();
+
+   if (!$incident) {
+
+       http_response_code(404);
+
+       echo json_encode([
+           'success' => false,
+           'message' => 'Incident not found.'
+       ]);
+
+       exit;
+   }
+
+   echo json_encode([
+       'success' => true,
+       'data' => $incident
+   ]);
+
+} catch (Throwable $e) {
+
+   http_response_code(500);
+
+   echo json_encode([
+       'success' => false,
+       'message' => $e->getMessage()
+   ]);
 }
