@@ -1,29 +1,89 @@
 <?php
-function getConnection(): PDO {
-    static $pdo = null;
-    if ($pdo) return $pdo;
+declare(strict_types=1);
 
-    $c = require __DIR__ . '/database.php';
-    $dsn = "pgsql:host={$c['host']};port={$c['port']};dbname={$c['dbname']};sslmode=prefer";
+/**
+* MDRRMO Response Emergency System
+* PostgreSQL connection helper.
+*
+* Requires DATABASE_URL in Render environment variables.
+*/
 
-    $pdo = new PDO($dsn, $c['user'], $c['password'], [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-    return $pdo;
-}
+if (!function_exists('getDatabaseConnection')) {
+   function getDatabaseConnection(): PDO
+   {
+       static $pdo = null;
 
-// Allow the Hatchable website to call this API, and send JSON
-function cors(): void {
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type');
-    header('Content-Type: application/json; charset=utf-8');
-    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
-}
+       if ($pdo instanceof PDO) {
+           return $pdo;
+       }
 
-function jsonResponse(int $code, array $data): void {
-    http_response_code($code);
-    echo json_encode($data);
-    exit;
+       $databaseUrl = getenv('DATABASE_URL');
+
+       if (!$databaseUrl) {
+           error_log('MDRRMO: DATABASE_URL is not configured.');
+           throw new RuntimeException(
+               'Database configuration is unavailable.'
+           );
+       }
+
+       $db = parse_url($databaseUrl);
+
+       if (
+           $db === false ||
+           empty($db['host']) ||
+           empty($db['user']) ||
+           !isset($db['pass']) ||
+           empty($db['path']) ||
+           $db['path'] === '/'
+       ) {
+           error_log('MDRRMO: Invalid DATABASE_URL.');
+           throw new RuntimeException(
+               'Database configuration is invalid.'
+           );
+       }
+
+       $host = $db['host'];
+       $port = (int) ($db['port'] ?? 5432);
+       $username = rawurldecode($db['user']);
+       $password = rawurldecode($db['pass']);
+       $database = rawurldecode(ltrim($db['path'], '/'));
+
+       $query = [];
+       parse_str($db['query'] ?? '', $query);
+
+       $sslmode = $query['sslmode']
+           ?? getenv('PGSSLMODE')
+           ?: 'require';
+
+       $dsn = sprintf(
+           'pgsql:host=%s;port=%d;dbname=%s;sslmode=%s',
+           $host,
+           $port,
+           $database,
+           $sslmode
+       );
+
+       try {
+           $pdo = new PDO($dsn, $username, $password, [
+               PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+               PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+               PDO::ATTR_EMULATE_PREPARES => false,
+               PDO::ATTR_TIMEOUT => 10
+           ]);
+
+           return $pdo;
+
+       } catch (PDOException $e) {
+           error_log(
+               'MDRRMO PostgreSQL connection failed: ' .
+               $e->getMessage()
+           );
+
+           throw new RuntimeException(
+               'Database connection failed.',
+               0,
+               $e
+           );
+       }
+   }
 }
